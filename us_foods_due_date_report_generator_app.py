@@ -571,7 +571,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
 
     rows = []
     missing_email_rows = []
-    future_rows = []
+    cutoff_rows = []
 
     progress.write("Merging XML data into open jobs...")
 
@@ -584,9 +584,9 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
 
         if ship_obj and ship_obj > selected_due_date:
-            future_row = report_row.copy()
-            future_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
-            future_rows.append(future_row)
+            cutoff_row = report_row.copy()
+            cutoff_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
+            cutoff_rows.append(cutoff_row)
             continue
 
         rows.append(report_row)
@@ -612,8 +612,8 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         columns=["Job No", "Order Description", "PO#", "Email Found"],
     )
 
-    future_exclusions = pd.DataFrame(
-        future_rows,
+    cutoff_exclusions = pd.DataFrame(
+        cutoff_rows,
         columns=columns + ["Reason Excluded"],
     )
 
@@ -629,15 +629,15 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         "Final report rows": len(final),
         "Missing Email Count": len(missing_emails),
         "Due Date Cutoff": selected_due_date.strftime("%m/%d/%y"),
-        "After Cutoff Date Exclusions": len(future_exclusions),
-        "Open jobs accounted for": len(final) + len(future_exclusions),
+        "After Cutoff Date Exclusions": len(cutoff_exclusions),
+        "Open jobs accounted for": len(final) + len(cutoff_exclusions),
     }
 
     expected_jobs = set(master["Job No"].astype(str).str.strip())
     final_jobs = set(final["Job No"].astype(str).str.strip()) if not final.empty else set()
-    future_jobs = set(future_exclusions["Job No"].astype(str).str.strip()) if not future_exclusions.empty else set()
+    cutoff_jobs = set(cutoff_exclusions["Job No"].astype(str).str.strip()) if not cutoff_exclusions.empty else set()
 
-    missing_from_output = sorted(expected_jobs - final_jobs - future_jobs)
+    missing_from_output = sorted(expected_jobs - final_jobs - cutoff_jobs)
     stats["Validation Missing Job Count"] = len(missing_from_output)
 
     if missing_from_output:
@@ -647,7 +647,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
             + (" ..." if len(missing_from_output) > 50 else "")
         )
 
-    return final, missing_emails, future_exclusions, stats
+    return final, missing_emails, cutoff_exclusions, stats
 
 
 def format_worksheet(ws):
@@ -723,7 +723,7 @@ def format_worksheet(ws):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
 
-def write_excel(final_df, missing_emails_df, future_exclusions_df, stats):
+def write_excel(final_df, missing_emails_df, cutoff_exclusions_df, stats):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -736,7 +736,7 @@ def write_excel(final_df, missing_emails_df, future_exclusions_df, stats):
         ].to_excel(writer, sheet_name="TRIM", index=False)
 
         missing_emails_df.to_excel(writer, sheet_name="MISSING EMAILS", index=False)
-        future_exclusions_df.to_excel(writer, sheet_name="FUTURE USF DATE EXCLUSIONS", index=False)
+        cutoff_exclusions_df.to_excel(writer, sheet_name="EXCLUDED BY DATE", index=False)
 
         summary_df = pd.DataFrame(list(stats.items()), columns=["Metric", "Value"])
         summary_df.to_excel(writer, sheet_name="SUMMARY", index=False)
@@ -754,7 +754,6 @@ def write_excel(final_df, missing_emails_df, future_exclusions_df, stats):
     return final_output.getvalue()
 
 
-st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
 st.title(APP_TITLE)
 
 st.info(
@@ -813,7 +812,7 @@ if st.button("Generate Report", type="primary"):
         st.error("Upload either a US Foods ZIP or individual email/XML files.")
     else:
         try:
-            final_df, missing_emails_df, future_exclusions_df, stats = build_report(
+            final_df, missing_emails_df, cutoff_exclusions_df, stats = build_report(
                 tracking_upload,
                 cancel_upload,
                 zip_uploads,
@@ -825,7 +824,7 @@ if st.button("Generate Report", type="primary"):
             report_bytes = write_excel(
                 final_df,
                 missing_emails_df,
-                future_exclusions_df,
+                cutoff_exclusions_df,
                 stats,
             )
 
@@ -865,9 +864,9 @@ if st.button("Generate Report", type="primary"):
                 with st.expander("Missing Emails"):
                     st.dataframe(missing_emails_df, use_container_width=True)
 
-            if not future_exclusions_df.empty:
+            if not cutoff_exclusions_df.empty:
                 with st.expander("After Cutoff Date Exclusions"):
-                    st.dataframe(future_exclusions_df, use_container_width=True)
+                    st.dataframe(cutoff_exclusions_df, use_container_width=True)
 
             st.download_button(
                 "Download Excel Report",
