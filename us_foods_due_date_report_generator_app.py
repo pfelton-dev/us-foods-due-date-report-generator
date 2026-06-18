@@ -552,8 +552,7 @@ def make_report_row(row, rec, email_found):
         "Job No": clean_text(row["Job No"]),
         "Order Description": clean_text(row["Order Description"]),
         "PO#": clean_text(row["PO#"]),
-        "custPONumber": clean_text(rec.get("custPONumber", "")) if rec else "",
-        "Email Found": "YES" if email_found else "NO",
+"MS#": clean_text(rec.get("custPONumber", "")) if rec else "",        "Email Found": "YES" if email_found else "NO",
         "USF Date": fmt_date(rec.get("Ship Date", "")) if rec else "",
         "Recv Date": fmt_date(rec.get("Received Date", "")) if rec else "",
         "Paper Type": paper,
@@ -638,9 +637,9 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
             })
 
     columns = [
-        "Job No", "Order Description", "PO#", "custPONumber", "Email Found",
-        "USF Date", "Recv Date", "Paper Type", "Page Size", "LAM", "UV"
-    ]
+    "Job No", "Order Description", "PO#", "MS#", "Email Found",
+    "USF Date", "Recv Date", "Paper Type", "Page Size", "LAM", "UV"
+]
 
     final = pd.DataFrame(rows, columns=columns)
     final = sort_report(final)
@@ -695,6 +694,7 @@ def format_worksheet(ws):
     duplicate_fill = PatternFill("solid", fgColor="FFF2CC")
     bad_page_fill = PatternFill("solid", fgColor="FFF2CC")
     missing_paper_fill = PatternFill("solid", fgColor="F4CCCC")
+    same_date_fill = PatternFill("solid", fgColor="D9EAD3")
 
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -704,7 +704,7 @@ def format_worksheet(ws):
     cust_col = None
 
     for cell in ws[1]:
-        if clean_text(cell.value) == "custPONumber":
+        if clean_text(cell.value) == "MS#":
             cust_col = cell.column
             break
 
@@ -724,8 +724,28 @@ def format_worksheet(ws):
     header_map = {clean_text(ws.cell(1, c).value): c for c in range(1, ws.max_column + 1)}
     paper_col = header_map.get("Paper Type")
     page_col = header_map.get("Page Size")
+    usf_date_col = header_map.get("USF Date")
+    recv_date_col = header_map.get("Recv Date")
 
     for row_num in range(2, ws.max_row + 1):
+                if (
+            ws.title == "Filled Report"
+            and usf_date_col
+            and recv_date_col
+        ):
+            usf_value = clean_text(ws.cell(row_num, usf_date_col).value)
+            recv_value = clean_text(ws.cell(row_num, recv_date_col).value)
+
+            if usf_value and recv_value:
+                try:
+                    usf_date = pd.to_datetime(usf_value).date()
+                    recv_date = pd.to_datetime(recv_value).date()
+
+                    if usf_date == recv_date:
+                        for col_num in range(1, ws.max_column + 1):
+                            ws.cell(row_num, col_num).fill = same_date_fill
+                except Exception:
+                    pass
         if paper_col:
             paper_cell = ws.cell(row_num, paper_col)
             if not clean_text(paper_cell.value):
