@@ -794,23 +794,10 @@ def write_excel(final_df, missing_emails_df, future_exclusions_df, stats):
 
 st.title(APP_TITLE)
 
-st.info(
-    "v1.0.0: Separate due date version of the US Foods report. "
-    "Use the calendar below to choose the cutoff date. "
-    "The report keeps jobs with a USF Date on the selected date or prior, "
-    "and excludes jobs with a USF Date after the selected cutoff date. "
-    "Master report is the source of truth. Open/non-cancelled jobs stay in the report even when no email/XML is found."
-)
-
-st.subheader("Due Date Filter")
-
 selected_due_date = st.date_input(
     "Show jobs due on this date and prior:",
-    value=date.today(),
-    help="The report will include jobs with a USF Date on or before this selected date."
+    value=date.today()
 )
-
-st.caption(f"Selected cutoff date: {selected_due_date.strftime('%m/%d/%y')}")
 
 left, right = st.columns(2)
 
