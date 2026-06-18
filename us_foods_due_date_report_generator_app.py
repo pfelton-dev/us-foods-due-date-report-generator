@@ -552,7 +552,8 @@ def make_report_row(row, rec, email_found):
         "Job No": clean_text(row["Job No"]),
         "Order Description": clean_text(row["Order Description"]),
         "PO#": clean_text(row["PO#"]),
-"MS#": clean_text(rec.get("custPONumber", "")) if rec else "",        "Email Found": "YES" if email_found else "NO",
+        "MS#": clean_text(rec.get("custPONumber", "")) if rec else "",
+        "Email Found": "YES" if email_found else "NO",
         "USF Date": fmt_date(rec.get("Ship Date", "")) if rec else "",
         "Recv Date": fmt_date(rec.get("Received Date", "")) if rec else "",
         "Paper Type": paper,
@@ -727,8 +728,8 @@ def format_worksheet(ws):
     usf_date_col = header_map.get("USF Date")
     recv_date_col = header_map.get("Recv Date")
 
-    for row_num in range(2, ws.max_row + 1):
-                if (
+       for row_num in range(2, ws.max_row + 1):
+        if (
             ws.title == "Filled Report"
             and usf_date_col
             and recv_date_col
