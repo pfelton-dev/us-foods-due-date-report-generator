@@ -16,6 +16,12 @@ from openpyxl.utils import get_column_letter
 APP_VERSION = "v1.0.0"
 APP_TITLE = f"US Foods Due Date Report Generator {APP_VERSION}"
 
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon="📅",
+    layout="wide"
+)
+
 try:
     import extract_msg
 except Exception:
