@@ -258,6 +258,44 @@ def read_msg_body_with_extract_msg(file_name, data):
             except Exception:
                 pass
 
+        # Also read XML/TXT/EML attachments inside Outlook .msg files.
+        # Some US Foods emails store the cXML order in an attachment instead of the email body.
+        try:
+            for attachment in getattr(msg, "attachments", []) or []:
+                attachment_name = ""
+                for name_attr in ["longFilename", "shortFilename", "name"]:
+                    try:
+                        attachment_name = getattr(attachment, name_attr, "") or attachment_name
+                    except Exception:
+                        pass
+
+                attachment_name_lower = str(attachment_name).lower()
+
+                try:
+                    attachment_data = getattr(attachment, "data", None)
+                except Exception:
+                    attachment_data = None
+
+                if not attachment_data:
+                    continue
+
+                # Decode likely XML/text attachments. If the filename is blank, still try to decode.
+                if (
+                    attachment_name_lower.endswith((".xml", ".txt", ".eml"))
+                    or b"<cXML" in attachment_data
+                    or b"orderID" in attachment_data
+                ):
+                    for enc in ["utf-8", "utf-16le", "latin-1"]:
+                        try:
+                            decoded_attachment = attachment_data.decode(enc, errors="ignore")
+                            if decoded_attachment and ("<cXML" in decoded_attachment or "orderID" in decoded_attachment):
+                                parts.append(decoded_attachment)
+                                break
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
         try:
             msg.close()
         except Exception:
@@ -571,7 +609,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
 
     rows = []
     missing_email_rows = []
-    cutoff_rows = []
+    future_rows = []
 
     progress.write("Merging XML data into open jobs...")
 
@@ -584,9 +622,9 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
 
         if ship_obj and ship_obj > selected_due_date:
-            cutoff_row = report_row.copy()
-            cutoff_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
-            cutoff_rows.append(cutoff_row)
+            future_row = report_row.copy()
+            future_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
+            future_rows.append(future_row)
             continue
 
         rows.append(report_row)
@@ -612,8 +650,8 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         columns=["Job No", "Order Description", "PO#", "Email Found"],
     )
 
-    cutoff_exclusions = pd.DataFrame(
-        cutoff_rows,
+    future_exclusions = pd.DataFrame(
+        future_rows,
         columns=columns + ["Reason Excluded"],
     )
 
@@ -629,15 +667,15 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         "Final report rows": len(final),
         "Missing Email Count": len(missing_emails),
         "Due Date Cutoff": selected_due_date.strftime("%m/%d/%y"),
-        "After Cutoff Date Exclusions": len(cutoff_exclusions),
-        "Open jobs accounted for": len(final) + len(cutoff_exclusions),
+        "After Cutoff Date Exclusions": len(future_exclusions),
+        "Open jobs accounted for": len(final) + len(future_exclusions),
     }
 
     expected_jobs = set(master["Job No"].astype(str).str.strip())
     final_jobs = set(final["Job No"].astype(str).str.strip()) if not final.empty else set()
-    cutoff_jobs = set(cutoff_exclusions["Job No"].astype(str).str.strip()) if not cutoff_exclusions.empty else set()
+    future_jobs = set(future_exclusions["Job No"].astype(str).str.strip()) if not future_exclusions.empty else set()
 
-    missing_from_output = sorted(expected_jobs - final_jobs - cutoff_jobs)
+    missing_from_output = sorted(expected_jobs - final_jobs - future_jobs)
     stats["Validation Missing Job Count"] = len(missing_from_output)
 
     if missing_from_output:
@@ -647,7 +685,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
             + (" ..." if len(missing_from_output) > 50 else "")
         )
 
-    return final, missing_emails, cutoff_exclusions, stats
+    return final, missing_emails, future_exclusions, stats
 
 
 def format_worksheet(ws):
@@ -723,7 +761,7 @@ def format_worksheet(ws):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
 
-def write_excel(final_df, missing_emails_df, cutoff_exclusions_df, stats):
+def write_excel(final_df, missing_emails_df, future_exclusions_df, stats):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -736,7 +774,7 @@ def write_excel(final_df, missing_emails_df, cutoff_exclusions_df, stats):
         ].to_excel(writer, sheet_name="TRIM", index=False)
 
         missing_emails_df.to_excel(writer, sheet_name="MISSING EMAILS", index=False)
-        cutoff_exclusions_df.to_excel(writer, sheet_name="EXCLUDED BY DATE", index=False)
+        future_exclusions_df.to_excel(writer, sheet_name="FUTURE USF DATE EXCLUSIONS", index=False)
 
         summary_df = pd.DataFrame(list(stats.items()), columns=["Metric", "Value"])
         summary_df.to_excel(writer, sheet_name="SUMMARY", index=False)
@@ -757,7 +795,11 @@ def write_excel(final_df, missing_emails_df, cutoff_exclusions_df, stats):
 st.title(APP_TITLE)
 
 st.info(
-    "Select a due date. The report will include jobs due on or before the selected date."
+    "v1.0.0: Separate due date version of the US Foods report. "
+    "Use the calendar below to choose the cutoff date. "
+    "The report keeps jobs with a USF Date on the selected date or prior, "
+    "and excludes jobs with a USF Date after the selected cutoff date. "
+    "Master report is the source of truth. Open/non-cancelled jobs stay in the report even when no email/XML is found."
 )
 
 st.subheader("Due Date Filter")
@@ -808,7 +850,7 @@ if st.button("Generate Report", type="primary"):
         st.error("Upload either a US Foods ZIP or individual email/XML files.")
     else:
         try:
-            final_df, missing_emails_df, cutoff_exclusions_df, stats = build_report(
+            final_df, missing_emails_df, future_exclusions_df, stats = build_report(
                 tracking_upload,
                 cancel_upload,
                 zip_uploads,
@@ -820,7 +862,7 @@ if st.button("Generate Report", type="primary"):
             report_bytes = write_excel(
                 final_df,
                 missing_emails_df,
-                cutoff_exclusions_df,
+                future_exclusions_df,
                 stats,
             )
 
@@ -860,9 +902,9 @@ if st.button("Generate Report", type="primary"):
                 with st.expander("Missing Emails"):
                     st.dataframe(missing_emails_df, use_container_width=True)
 
-            if not cutoff_exclusions_df.empty:
+            if not future_exclusions_df.empty:
                 with st.expander("After Cutoff Date Exclusions"):
-                    st.dataframe(cutoff_exclusions_df, use_container_width=True)
+                    st.dataframe(future_exclusions_df, use_container_width=True)
 
             st.download_button(
                 "Download Excel Report",
