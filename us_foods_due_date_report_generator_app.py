@@ -728,7 +728,7 @@ def format_worksheet(ws):
     usf_date_col = header_map.get("USF Date")
     recv_date_col = header_map.get("Recv Date")
 
-       for row_num in range(2, ws.max_row + 1):
+    for row_num in range(2, ws.max_row + 1):
         if (
             ws.title == "Filled Report"
             and usf_date_col
