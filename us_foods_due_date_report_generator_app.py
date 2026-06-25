@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "v1.0.0"
+APP_VERSION = "v1.0.1"
 APP_TITLE = f"US Foods Due Date Report Generator {APP_VERSION}"
 
 st.set_page_config(
@@ -46,6 +46,14 @@ def clean_xml_fragments(value):
 
 def normalize_po(value):
     value = clean_text(value).upper()
+    value = value.replace("\u200b", "").replace("\ufeff", "")
+    value = re.sub(r"\s+", "", value)
+    if value.endswith(".0"):
+        value = value[:-2]
+    return value
+
+def normalize_job(value):
+    value = clean_text(value)
     value = value.replace("\u200b", "").replace("\ufeff", "")
     value = re.sub(r"\s+", "", value)
     if value.endswith(".0"):
@@ -536,14 +544,15 @@ def load_cancelled(upload):
         df[status_col].astype(str).str.contains("cancel", case=False, na=False)
     ]
 
-    cancelled_jobs = set(cancelled_df[job_col].astype(str).str.strip())
+    cancelled_jobs = set(cancelled_df[job_col].apply(normalize_job))
 
     type_lookup = {}
 
     if type_col:
         for _, row in df.iterrows():
-            job = str(row[job_col]).strip()
-            type_lookup[job] = clean_text(row[type_col])
+            job = normalize_job(row[job_col])
+            if job:
+                type_lookup[job] = clean_text(row[type_col])
 
     return cancelled_jobs, type_lookup
 
@@ -614,9 +623,9 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
     ].copy()
     after_shipped_by_removal = len(master)
 
-    progress.write("Loading cancelled status report...")
+    progress.write("Loading Print Logic Job List / Cancellation Report...")
     cancelled, type_lookup = load_cancelled(cancel_upload)
-    master = master[~master["Job No"].astype(str).str.strip().isin(cancelled)].copy()
+    master = master[~master["Job No"].apply(normalize_job).isin(cancelled)].copy()
     after_cancel = len(master)
 
     progress.write("Reading Outlook email bodies/XML...")
@@ -634,7 +643,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         email_found = rec is not None
 
         report_row = make_report_row(row, rec or {}, email_found)
-        job_no = str(report_row["Job No"]).strip()
+        job_no = normalize_job(report_row["Job No"])
         report_row["Job Type"] = type_lookup.get(job_no, "")
         ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
 
@@ -688,9 +697,9 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         "Open jobs accounted for": len(final) + len(future_exclusions),
     }
 
-    expected_jobs = set(master["Job No"].astype(str).str.strip())
-    final_jobs = set(final["Job No"].astype(str).str.strip()) if not final.empty else set()
-    future_jobs = set(future_exclusions["Job No"].astype(str).str.strip()) if not future_exclusions.empty else set()
+    expected_jobs = set(master["Job No"].apply(normalize_job))
+    final_jobs = set(final["Job No"].apply(normalize_job)) if not final.empty else set()
+    future_jobs = set(future_exclusions["Job No"].apply(normalize_job)) if not future_exclusions.empty else set()
 
     missing_from_output = sorted(expected_jobs - final_jobs - future_jobs)
     stats["Validation Missing Job Count"] = len(missing_from_output)
@@ -743,6 +752,9 @@ def format_worksheet(ws):
     header_map = {clean_text(ws.cell(1, c).value): c for c in range(1, ws.max_column + 1)}
     job_col = header_map.get("Job No")
     type_col = header_map.get("Job Type")
+
+    if type_col:
+        ws.column_dimensions[get_column_letter(type_col)].hidden = True
     paper_col = header_map.get("Paper Type")
     page_col = header_map.get("Page Size")
     usf_date_col = header_map.get("USF Date")
@@ -877,7 +889,7 @@ if st.button("Generate Report", type="primary"):
     if not tracking_upload:
         st.error("Upload the Master Tracking Numbers Report.")
     elif not cancel_upload:
-        st.error("Upload the Cancelled Status Report.")
+        st.error("Upload the Print Logic Job List / Cancellation Report.")
     elif not zip_uploads and not email_uploads:
         st.error("Upload either a US Foods ZIP or individual email/XML files.")
     else:
@@ -920,7 +932,8 @@ if st.button("Generate Report", type="primary"):
             with st.expander("Processing Stats"):
                 st.json(stats)
 
-            blank_counts = final_df.eq("").sum()
+            preview_df = final_df.drop(columns=["Job Type"], errors="ignore")
+            blank_counts = preview_df.eq("").sum()
 
             if blank_counts.sum() > 0:
                 st.warning(
@@ -946,7 +959,7 @@ if st.button("Generate Report", type="primary"):
             )
 
             st.subheader("Preview")
-            st.dataframe(final_df, use_container_width=True)
+            st.dataframe(preview_df, use_container_width=True)
 
         except Exception as e:
             st.error(f"Report failed: {e}")
