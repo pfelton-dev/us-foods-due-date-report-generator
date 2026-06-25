@@ -524,13 +524,28 @@ def load_cancelled(upload):
         (c for c in df.columns if "status" in c.lower()),
         None,
     )
+    type_col = "Type" if "Type" in df.columns else next(
+        (c for c in df.columns if "type" in c.lower()),
+        None,
+    )
 
     if not job_col or not status_col:
-        return set()
+        return set(), {}
 
-    cancelled_df = df[df[status_col].astype(str).str.contains("cancel", case=False, na=False)]
+    cancelled_df = df[
+        df[status_col].astype(str).str.contains("cancel", case=False, na=False)
+    ]
 
-    return set(cancelled_df[job_col].astype(str).str.strip())
+    cancelled_jobs = set(cancelled_df[job_col].astype(str).str.strip())
+
+    type_lookup = {}
+
+    if type_col:
+        for _, row in df.iterrows():
+            job = str(row[job_col]).strip()
+            type_lookup[job] = clean_text(row[type_col])
+
+    return cancelled_jobs, type_lookup
 
 
 def make_report_row(row, rec, email_found):
@@ -600,7 +615,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
     after_shipped_by_removal = len(master)
 
     progress.write("Loading cancelled status report...")
-    cancelled = load_cancelled(cancel_upload)
+    cancelled, type_lookup = load_cancelled(cancel_upload)
     master = master[~master["Job No"].astype(str).str.strip().isin(cancelled)].copy()
     after_cancel = len(master)
 
@@ -619,6 +634,8 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
         email_found = rec is not None
 
         report_row = make_report_row(row, rec or {}, email_found)
+        job_no = str(report_row["Job No"]).strip()
+        report_row["Job Type"] = type_lookup.get(job_no, "")
         ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
 
         if ship_obj and ship_obj > selected_due_date:
@@ -638,7 +655,7 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
             })
 
     columns = [
-    "Job No", "Order Description", "PO#", "MS#", "Email Found",
+    "Job No", "Job Type", "Order Description", "PO#", "MS#", "Email Found",
     "USF Date", "Recv Date", "Paper Type", "Page Size", "LAM", "UV"
 ]
 
@@ -695,6 +712,7 @@ def format_worksheet(ws):
     duplicate_fill = PatternFill("solid", fgColor="FFF2CC")
     bad_page_fill = PatternFill("solid", fgColor="FFF2CC")
     missing_paper_fill = PatternFill("solid", fgColor="F4CCCC")
+    missing_type_fill = PatternFill("solid", fgColor="F4B183")
     same_date_fill = PatternFill("solid", fgColor="D9EAD3")
 
     for cell in ws[1]:
@@ -723,6 +741,8 @@ def format_worksheet(ws):
                     ws.cell(row_num, cust_col).fill = duplicate_fill
 
     header_map = {clean_text(ws.cell(1, c).value): c for c in range(1, ws.max_column + 1)}
+    job_col = header_map.get("Job No")
+    type_col = header_map.get("Job Type")
     paper_col = header_map.get("Paper Type")
     page_col = header_map.get("Page Size")
     usf_date_col = header_map.get("USF Date")
@@ -747,6 +767,10 @@ def format_worksheet(ws):
                             ws.cell(row_num, col_num).fill = same_date_fill
                 except Exception:
                     pass
+        if job_col and type_col:
+            if clean_text(ws.cell(row_num, type_col).value) == "":
+                ws.cell(row_num, job_col).fill = missing_type_fill
+
         if paper_col:
             paper_cell = ws.cell(row_num, paper_col)
             if not clean_text(paper_cell.value):
@@ -828,7 +852,7 @@ with left:
         type=["xls", "xlsx"],
     )
     cancel_upload = st.file_uploader(
-        "2. Cancelled Status Report",
+        "2. Print Logic Job List / Cancellation Report",
         type=["xlsx", "xls"],
     )
 
