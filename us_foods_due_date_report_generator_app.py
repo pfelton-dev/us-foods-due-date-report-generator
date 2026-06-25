@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "v1.0.1"
+APP_VERSION = "v1.0.2"
 APP_TITLE = f"US Foods Due Date Report Generator {APP_VERSION}"
 
 st.set_page_config(
@@ -722,6 +722,7 @@ def format_worksheet(ws):
     bad_page_fill = PatternFill("solid", fgColor="FFF2CC")
     missing_paper_fill = PatternFill("solid", fgColor="F4CCCC")
     missing_type_fill = PatternFill("solid", fgColor="F4B183")
+    outside_purchase_fill = PatternFill("solid", fgColor="FFC0CB")
     same_date_fill = PatternFill("solid", fgColor="D9EAD3")
 
     for cell in ws[1]:
@@ -779,9 +780,18 @@ def format_worksheet(ws):
                             ws.cell(row_num, col_num).fill = same_date_fill
                 except Exception:
                     pass
-        if job_col and type_col:
-            if clean_text(ws.cell(row_num, type_col).value) == "":
+        if ws.title == "Filled Report" and job_col and type_col:
+            job_type = clean_text(ws.cell(row_num, type_col).value).strip().lower()
+
+            # Blank / NaN Job Type = orange Job No only
+            if job_type in ["", "nan", "none"]:
                 ws.cell(row_num, job_col).fill = missing_type_fill
+
+            # Outside Purchase = pink Job No only
+            elif job_type == "outside purchase":
+                ws.cell(row_num, job_col).fill = outside_purchase_fill
+
+            # Digital / Offset = no color
 
         if paper_col:
             paper_cell = ws.cell(row_num, paper_col)
