@@ -722,7 +722,7 @@ def format_worksheet(ws):
     bad_page_fill = PatternFill("solid", fgColor="FFF2CC")
     missing_paper_fill = PatternFill("solid", fgColor="F4CCCC")
     missing_type_fill = PatternFill("solid", fgColor="F4B183")
-    outside_purchase_fill = PatternFill("solid", fgColor="FFC0CB")
+    outside_purchase_fill = PatternFill("solid", fgColor="D9D2E9")
     same_date_fill = PatternFill("solid", fgColor="D9EAD3")
 
     for cell in ws[1]:
