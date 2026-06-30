@@ -606,6 +606,7 @@ def sort_report(df):
     return df.drop(columns=["_priority", "_ship_sort"])
 
 
+
 def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, selected_due_date, progress):
     progress.write("Loading tracking report...")
     master = load_tracking(tracking_upload)
@@ -616,113 +617,84 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
     untracked_rows = len(master)
 
     progress.write("Removing Our Van, Deva / RAM, and Customer Pickup jobs...")
+    master = master[
+        ~master["Shipped By"].fillna("").astype(str).str.strip().str.upper().isin(
+            ["OUR VAN","DEVA / RAM","CUSTOMER PICKUP","CUSTOMER PICK UP"]
+        )
+    ].copy()
+    after_shipped_by_removal = len(master)
 
-master = master[
-    ~master["Shipped By"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.upper()
-        .isin([
-            "OUR VAN",
-            "DEVA / RAM",
-            "CUSTOMER PICKUP",
-            "CUSTOMER PICK UP",
-        ])
-].copy()
+    progress.write("Loading Print Logic Job List / Cancellation Report...")
+    cancelled, type_lookup = load_cancelled(cancel_upload)
+    master = master[~master["Job No"].apply(normalize_job).isin(cancelled)].copy()
+    after_cancel = len(master)
 
-after_shipped_by_removal = len(master)
+    progress.write("Reading Outlook email bodies/XML...")
+    po_map, files_seen, xml_records = collect_records(zip_uploads, email_uploads, progress)
 
-progress.write("Loading Print Logic Job List / Cancellation Report...")
-cancelled, type_lookup = load_cancelled(cancel_upload)
-master = master[~master["Job No"].apply(normalize_job).isin(cancelled)].copy()
-after_cancel = len(master)
+    rows=[]
+    missing_email_rows=[]
+    future_rows=[]
 
-progress.write("Reading Outlook email bodies/XML...")
-po_map, files_seen, xml_records = collect_records(zip_uploads, email_uploads, progress)
+    progress.write("Merging XML data into open jobs...")
 
-rows = []
-missing_email_rows = []
-future_rows = []
+    for _, row in master.iterrows():
+        po_key = normalize_po(row["PO#"])
+        rec = po_map.get(po_key)
+        email_found = rec is not None
 
-progress.write("Merging XML data into open jobs...")
+        report_row = make_report_row(row, rec or {}, email_found)
+        job_no = normalize_job(report_row["Job No"])
+        report_row["Job Type"] = type_lookup.get(job_no, "")
+        ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
 
-for _, row in master.iterrows():
-    po_key = normalize_po(row["PO#"])
-    rec = po_map.get(po_key)
-    email_found = rec is not None
+        if ship_obj and ship_obj > selected_due_date:
+            fr = report_row.copy()
+            fr["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
+            future_rows.append(fr)
+            continue
 
-    report_row = make_report_row(row, rec or {}, email_found)
-    job_no = normalize_job(report_row["Job No"])
-    report_row["Job Type"] = type_lookup.get(job_no, "")
-    ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
+        rows.append(report_row)
 
-    if ship_obj and ship_obj > selected_due_date:
-        future_row = report_row.copy()
-        future_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
-        future_rows.append(future_row)
-        continue
+        if not email_found:
+            missing_email_rows.append({
+                "Job No": report_row["Job No"],
+                "Order Description": report_row["Order Description"],
+                "PO#": report_row["PO#"],
+                "Email Found":"NO",
+            })
 
-    rows.append(report_row)
+    columns=["Job No","Job Type","Order Description","PO#","MS#","Email Found","USF Date","Recv Date","Paper Type","Page Size","LAM","UV"]
+    final=pd.DataFrame(rows,columns=columns)
+    final=sort_report(final)
+    missing_emails=pd.DataFrame(missing_email_rows,columns=["Job No","Order Description","PO#","Email Found"])
+    future_exclusions=pd.DataFrame(future_rows,columns=columns+["Reason Excluded"])
 
-    if not email_found:
-        missing_email_rows.append({
-            "Job No": report_row["Job No"],
-            "Order Description": report_row["Order Description"],
-            "PO#": report_row["PO#"],
-            "Email Found": "NO",
-        })
-
-    columns = [
-    "Job No", "Job Type", "Order Description", "PO#", "MS#", "Email Found",
-    "USF Date", "Recv Date", "Paper Type", "Page Size", "LAM", "UV"
-]
-
-    final = pd.DataFrame(rows, columns=columns)
-    final = sort_report(final)
-
-    missing_emails = pd.DataFrame(
-        missing_email_rows,
-        columns=["Job No", "Order Description", "PO#", "Email Found"],
-    )
-
-    future_exclusions = pd.DataFrame(
-        future_rows,
-        columns=columns + ["Reason Excluded"],
-    )
-
-    stats = {
-        "App Version": APP_VERSION,
-        "Original tracking rows": original_rows,
-        "Rows after tracking removal": untracked_rows,
-        "Rows after Shipped By removal": after_shipped_by_removal,
-        "Rows after cancelled removal": after_cancel,
-        "Email/XML files scanned": files_seen,
-        "Embedded XML orders found": len(po_map),
-        "Raw XML records found": xml_records,
-        "Final report rows": len(final),
-        "Missing Email Count": len(missing_emails),
-        "Due Date Cutoff": selected_due_date.strftime("%m/%d/%y"),
-        "After Cutoff Date Exclusions": len(future_exclusions),
-        "Open jobs accounted for": len(final) + len(future_exclusions),
+    stats={
+        "App Version":APP_VERSION,
+        "Original tracking rows":original_rows,
+        "Rows after tracking removal":untracked_rows,
+        "Rows after Shipped By removal":after_shipped_by_removal,
+        "Rows after cancelled removal":after_cancel,
+        "Email/XML files scanned":files_seen,
+        "Embedded XML orders found":len(po_map),
+        "Raw XML records found":xml_records,
+        "Final report rows":len(final),
+        "Missing Email Count":len(missing_emails),
+        "Due Date Cutoff":selected_due_date.strftime("%m/%d/%y"),
+        "After Cutoff Date Exclusions":len(future_exclusions),
+        "Open jobs accounted for":len(final)+len(future_exclusions),
     }
 
-    expected_jobs = set(master["Job No"].apply(normalize_job))
-    final_jobs = set(final["Job No"].apply(normalize_job)) if not final.empty else set()
-    future_jobs = set(future_exclusions["Job No"].apply(normalize_job)) if not future_exclusions.empty else set()
-
-    missing_from_output = sorted(expected_jobs - final_jobs - future_jobs)
-    stats["Validation Missing Job Count"] = len(missing_from_output)
-
-    if missing_from_output:
-        raise ValueError(
-            "Validation failed. These open, non-cancelled jobs were not accounted for: "
-            + ", ".join(missing_from_output[:50])
-            + (" ..." if len(missing_from_output) > 50 else "")
-        )
+    expected=set(master["Job No"].apply(normalize_job))
+    final_jobs=set(final["Job No"].apply(normalize_job)) if not final.empty else set()
+    future_jobs=set(future_exclusions["Job No"].apply(normalize_job)) if not future_exclusions.empty else set()
+    missing=sorted(expected-final_jobs-future_jobs)
+    stats["Validation Missing Job Count"]=len(missing)
+    if missing:
+        raise ValueError("Validation failed. These open, non-cancelled jobs were not accounted for: "+", ".join(missing[:50])+(" ..." if len(missing)>50 else ""))
 
     return final, missing_emails, future_exclusions, stats
-
 
 def format_worksheet(ws):
     thin = Side(style="thin", color="808080")
@@ -984,4 +956,3 @@ if st.button("Generate Report", type="primary"):
         except Exception as e:
             st.error(f"Report failed: {e}")
             st.write("Screenshot this error or copy it to Peter.")
-            
