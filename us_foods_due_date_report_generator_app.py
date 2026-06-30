@@ -647,31 +647,31 @@ future_rows = []
 
 progress.write("Merging XML data into open jobs...")
 
-    for _, row in master.iterrows():
-        po_key = normalize_po(row["PO#"])
-        rec = po_map.get(po_key)
-        email_found = rec is not None
+for _, row in master.iterrows():
+    po_key = normalize_po(row["PO#"])
+    rec = po_map.get(po_key)
+    email_found = rec is not None
 
-        report_row = make_report_row(row, rec or {}, email_found)
-        job_no = normalize_job(report_row["Job No"])
-        report_row["Job Type"] = type_lookup.get(job_no, "")
-        ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
+    report_row = make_report_row(row, rec or {}, email_found)
+    job_no = normalize_job(report_row["Job No"])
+    report_row["Job Type"] = type_lookup.get(job_no, "")
+    ship_obj = parse_date_obj(rec.get("Ship Date", "") if rec else "")
 
-        if ship_obj and ship_obj > selected_due_date:
-            future_row = report_row.copy()
-            future_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
-            future_rows.append(future_row)
-            continue
+    if ship_obj and ship_obj > selected_due_date:
+        future_row = report_row.copy()
+        future_row["Reason Excluded"] = f"USF Date is after selected cutoff date ({selected_due_date.strftime('%m/%d/%y')})"
+        future_rows.append(future_row)
+        continue
 
-        rows.append(report_row)
+    rows.append(report_row)
 
-        if not email_found:
-            missing_email_rows.append({
-                "Job No": report_row["Job No"],
-                "Order Description": report_row["Order Description"],
-                "PO#": report_row["PO#"],
-                "Email Found": "NO",
-            })
+    if not email_found:
+        missing_email_rows.append({
+            "Job No": report_row["Job No"],
+            "Order Description": report_row["Order Description"],
+            "PO#": report_row["PO#"],
+            "Email Found": "NO",
+        })
 
     columns = [
     "Job No", "Job Type", "Order Description", "PO#", "MS#", "Email Found",
