@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "v1.0.2"
+APP_VERSION = "v1.0.3"
 APP_TITLE = f"US Foods Due Date Report Generator {APP_VERSION}"
 
 st.set_page_config(
@@ -615,13 +615,23 @@ def build_report(tracking_upload, cancel_upload, zip_uploads, email_uploads, sel
     master = master[master["Tracking Number"].astype(str).str.strip().eq("")].copy()
     untracked_rows = len(master)
 
-    progress.write("Removing Deva/RAM and Customer Pickup jobs...")
-    master = master[
-        ~master["Shipped By"].astype(str).str.strip().str.upper().isin(
-            ["DEVA / RAM", "CUSTOMER PICKUP", "CUSTOMER PICK UP"]
-        )
-    ].copy()
-    after_shipped_by_removal = len(master)
+    progress.write("Removing Our Van, Deva / RAM, and Customer Pickup jobs...")
+
+master = master[
+    ~master["Shipped By"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .isin([
+            "OUR VAN",
+            "DEVA / RAM",
+            "CUSTOMER PICKUP",
+            "CUSTOMER PICK UP",
+        ])
+].copy()
+
+after_shipped_by_removal = len(master)
 
     progress.write("Loading Print Logic Job List / Cancellation Report...")
     cancelled, type_lookup = load_cancelled(cancel_upload)
