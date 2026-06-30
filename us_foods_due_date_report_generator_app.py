@@ -984,3 +984,4 @@ if st.button("Generate Report", type="primary"):
         except Exception as e:
             st.error(f"Report failed: {e}")
             st.write("Screenshot this error or copy it to Peter.")
+            
