@@ -633,19 +633,19 @@ master = master[
 
 after_shipped_by_removal = len(master)
 
-    progress.write("Loading Print Logic Job List / Cancellation Report...")
-    cancelled, type_lookup = load_cancelled(cancel_upload)
-    master = master[~master["Job No"].apply(normalize_job).isin(cancelled)].copy()
-    after_cancel = len(master)
+progress.write("Loading Print Logic Job List / Cancellation Report...")
+cancelled, type_lookup = load_cancelled(cancel_upload)
+master = master[~master["Job No"].apply(normalize_job).isin(cancelled)].copy()
+after_cancel = len(master)
 
-    progress.write("Reading Outlook email bodies/XML...")
-    po_map, files_seen, xml_records = collect_records(zip_uploads, email_uploads, progress)
+progress.write("Reading Outlook email bodies/XML...")
+po_map, files_seen, xml_records = collect_records(zip_uploads, email_uploads, progress)
 
-    rows = []
-    missing_email_rows = []
-    future_rows = []
+rows = []
+missing_email_rows = []
+future_rows = []
 
-    progress.write("Merging XML data into open jobs...")
+progress.write("Merging XML data into open jobs...")
 
     for _, row in master.iterrows():
         po_key = normalize_po(row["PO#"])
